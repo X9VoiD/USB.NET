@@ -6,7 +6,7 @@ namespace USB.NET.Platform.Windows.Enumerators
     {
         public IEnumerable<Device> GetDevices()
         {
-            yield return null;
+            yield break;
         }
 
         public void Dispose()

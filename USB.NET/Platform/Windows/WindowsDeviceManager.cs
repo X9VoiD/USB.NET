@@ -15,7 +15,7 @@ namespace USB.NET.Platform.Windows
         private readonly IDeviceEnumerator[] Enumerators =
         {
             new UsbEnumerator(),
-            // new WinUsbEnumerator()
+            new WinUsbEnumerator()
         };
 
         public void Dispose()

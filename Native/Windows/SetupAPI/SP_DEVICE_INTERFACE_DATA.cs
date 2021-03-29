@@ -12,6 +12,11 @@ namespace Native.Windows
             public Guid interfaceClassGuid;
             public int flags;
             private UIntPtr reserved;
+
+            public static SP_DEVICE_INTERFACE_DATA AllocateNew()
+            {
+                return new SP_DEVICE_INTERFACE_DATA { cbSize = Marshal.SizeOf(typeof(SP_DEVICE_INTERFACE_DATA)) };
+            }
         }
     }
 }

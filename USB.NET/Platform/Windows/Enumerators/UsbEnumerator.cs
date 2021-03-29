@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Runtime.InteropServices;
-using static Native.Windows.CfgMgr;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
 using static Native.Windows.SetupAPI;
 using static Native.Windows.Windows;
 
@@ -10,92 +12,126 @@ namespace USB.NET.Platform.Windows.Enumerators
     internal class UsbEnumerator : IDeviceEnumerator
     {
         private readonly List<UsbDevice> usbDevices = new List<UsbDevice>();
-
-        // Cache getters
-        private static Guid usbHubGuid = GUID_DEVINTERFACE_USB_HUB;
-
-        private static DEVPROPKEY instanceIdProp = DEVPKEY_Device_InstanceId;
-
-        public UsbEnumerator()
-        {
-            usbDevices.Clear();
-            var usbHubs = usbHubGuid;
-            var deviceList = SetupDiGetClassDevs(ref usbHubs, IntPtr.Zero, IntPtr.Zero, DIGCF.DeviceInterface | DIGCF.Present);
-
-            for (uint i = 0; ; i++)
-            {
-                var deviceInterface = new SP_DEVICE_INTERFACE_DATA { cbSize = Marshal.SizeOf(typeof(SP_DEVICE_INTERFACE_DATA)) };
-                var deviceInterfaceInfo = new SP_DEVINFO_DATA { cbSize = (uint)Marshal.SizeOf(typeof(SP_DEVINFO_DATA)) };
-                var deviceInterfaceDetail = new SP_DEVICE_INTERFACE_DETAIL_DATA { cbSize = IntPtr.Size == 8 ? 8 : 6 };
-
-                SetupDiEnumDeviceInterfaces(deviceList, IntPtr.Zero, ref usbHubs, i, ref deviceInterface);
-                if (Marshal.GetLastWin32Error() == ERROR_NO_MORE_ITEMS)
-                    break;
-
-                var size = (uint)Marshal.SizeOf(deviceInterfaceDetail);
-                SetupDiGetDeviceInterfaceDetail(deviceList, ref deviceInterface, ref deviceInterfaceDetail, size, ref size, ref deviceInterfaceInfo);
-
-                var deviceInstanceId = Tools.RetrieveString(256, s =>
-                {
-                    SetupDiGetDeviceProperty(deviceList, ref deviceInterfaceInfo, ref instanceIdProp, out _, s, s.Capacity, out _, 0);
-                });
-
-                var hubNode = 0;
-                ExecuteWithRet(() => CM_Locate_DevNode(ref hubNode, deviceInstanceId, 0), ret =>
-                {
-                    if (ret != CR.SUCCESS)
-                        throw new CfgMgrException("Failed to locate USB Hub", ret);
-                });
-
-                usbDevices.AddRange(ProcessHub(hubNode));
-            }
-        }
+        private readonly List<DeviceInfoNode> deviceList = new List<DeviceInfoNode>();
+        private readonly List<DeviceInfoNode> hubList = new List<DeviceInfoNode>();
 
         public IEnumerable<Device> GetDevices()
         {
-            return usbDevices;
+            EnumerateHostControllers();
+            throw new NotImplementedException();
         }
 
-        private IEnumerable<UsbDevice> ProcessHub(int hubNode)
+        private void EnumerateHostControllers()
         {
-            var nodeStack = new Stack<int>();
-            nodeStack.Push(hubNode);
+            EnumerateAllDevices();
 
-            while (nodeStack.Count > 0)
+            var usbHostControllerGuid = GUID_DEVINTERFACE_USB_HOST_CONTROLLER;
+            var deviceInfoSet = SetupDiGetClassDevs(ref usbHostControllerGuid, IntPtr.Zero, IntPtr.Zero, DIGCF.Present | DIGCF.DeviceInterface);
+
+            var deviceInfoData = SP_DEVINFO_DATA.AllocateNew();
+
+            for (uint i = 0; SetupDiEnumDeviceInfo(deviceInfoSet, i, ref deviceInfoData); i++)
             {
-                var currentNode = nodeStack.Pop();
-                var childNode = currentNode;
-                if (CM_Get_Child(ref childNode, currentNode, 0) == CR.SUCCESS)
+                var deviceInterfaceData = SP_DEVICE_INTERFACE_DATA.AllocateNew();
+                var deviceInterfaceDetailData = SP_DEVICE_INTERFACE_DETAIL_DATA.AllocateNew();
+
+                if (!SetupDiEnumDeviceInterfaces(deviceInfoSet, IntPtr.Zero, ref usbHostControllerGuid, i, ref deviceInterfaceData))
+                    throw new UsbEnumeratorException("Failed to get device interface");
+
+                var size = (uint)Marshal.SizeOf<SP_DEVICE_INTERFACE_DETAIL_DATA>();
+                if (!SetupDiGetDeviceInterfaceDetail(deviceInfoSet, ref deviceInterfaceData, ref deviceInterfaceDetailData, size, ref size, IntPtr.Zero))
+                    throw new UsbEnumeratorException("Failed to get device data");
+
+                try
                 {
-                    do
-                    {
-                        nodeStack.Push(childNode);
-                    }
-                    while (CM_Get_Sibling(ref childNode, childNode, 0) == CR.SUCCESS);
+                    using var hostController = File.Open(deviceInterfaceDetailData.DevicePath, FileMode.Open, FileAccess.Write, FileShare.Write);
+                    var hostControllerHandle = hostController.SafeFileHandle;
+                    EnumerateHostController(hostControllerHandle, deviceInterfaceDetailData.DevicePath, deviceInfoSet, deviceInfoData);
                 }
-                else
+                catch (UnauthorizedAccessException)
                 {
-                    yield return new UsbDevice(currentNode);
+                    // Ignore
                 }
             }
         }
 
-        public static Guid GetNodeGuid(int node)
+        private void EnumerateAllDevices()
         {
-            var actualGuid = new Guid();
-            var GuidProperty = DEVPKEY_Device_ClassGuid;
-            var BufferSize = Marshal.SizeOf(actualGuid);
+            deviceList.AddRange(EnumerateAllDevicesWithGuid(GUID_DEVINTERFACE_USB_DEVICE));
+            hubList.AddRange(EnumerateAllDevicesWithGuid(GUID_DEVINTERFACE_USB_HUB));
+        }
 
-            ExecuteWithRet(() => CM_Get_DevNode_Property(node, ref GuidProperty, out _, ref actualGuid, ref BufferSize, 0), ret =>
+        private void EnumerateHostController(SafeFileHandle hostControllerHandle, string devicePath, IntPtr deviceInfoSet, SP_DEVINFO_DATA deviceInfodata)
+        {
+            
+        }
+
+        private IEnumerable<DeviceInfoNode> EnumerateAllDevicesWithGuid(Guid guid)
+        {
+            var deviceInfoSet = SetupDiGetClassDevs(ref guid, IntPtr.Zero, IntPtr.Zero, DIGCF.Present | DIGCF.DeviceInterface);
+
+            if (deviceInfoSet == InvalidHandle)
+                throw new UsbEnumeratorException($"Failed to retrieve device info set for {guid}");
+
+            for (uint i = 0; ; i++)
             {
-                if (ret != CR.SUCCESS)
-                    throw new CfgMgrException("Failed to get devNode property", ret);
-            });
-            return actualGuid;
+                var deviceInfoNode = new DeviceInfoNode()
+                {
+                    DeviceInfoSet = deviceInfoSet,
+                    DeviceInfoData = SP_DEVINFO_DATA.AllocateNew(),
+                    DeviceInterfaceData = SP_DEVICE_INTERFACE_DATA.AllocateNew(),
+                    DeviceDetailData = SP_DEVICE_INTERFACE_DETAIL_DATA.AllocateNew()
+                };
+
+                SetupDiEnumDeviceInfo(deviceInfoSet, i, ref deviceInfoNode.DeviceInfoData);
+                if (Marshal.GetLastWin32Error() == ERROR_NO_MORE_ITEMS)
+                    break;
+
+                if (!GetDeviceProperty(deviceInfoNode.DeviceInfoSet, deviceInfoNode.DeviceInfoData, SPDRP.DEVICEDESC, out deviceInfoNode.DeviceDescName))
+                    throw new UsbEnumeratorException($"Failed to get device property: {SPDRP.DEVICEDESC}");
+
+                if (!GetDeviceProperty(deviceInfoNode.DeviceInfoSet, deviceInfoNode.DeviceInfoData, SPDRP.DRIVER, out deviceInfoNode.DeviceDriverName))
+                    throw new UsbEnumeratorException($"Failed to get device property: {SPDRP.DRIVER}");
+
+                var size = (uint)Marshal.SizeOf<SP_DEVICE_INTERFACE_DETAIL_DATA>();
+                if (!SetupDiGetDeviceInterfaceDetail(deviceInfoNode.DeviceInfoSet, ref deviceInfoNode.DeviceInterfaceData, ref deviceInfoNode.DeviceDetailData, size, ref size, IntPtr.Zero))
+                    throw new UsbEnumeratorException($"Failed to get device data");
+
+                yield return deviceInfoNode;
+            }
+        }
+
+        private bool GetDeviceProperty(IntPtr deviceInfoSet, SP_DEVINFO_DATA deviceInfoData, SPDRP property, out string value)
+        {
+            SetupDiGetDeviceRegistryProperty(deviceInfoSet, ref deviceInfoData, property, out _, IntPtr.Zero, 0, out var size);
+
+            var text = new StringBuilder((int)size);
+            var ret = SetupDiGetDeviceRegistryProperty(deviceInfoSet, ref deviceInfoData, property, out _, text, size, out _);
+
+            value = text.ToString();
+            return ret;
         }
 
         public void Dispose()
         {
+        }
+
+        public class UsbEnumeratorException : Exception
+        {
+            public UsbEnumeratorException(string msg)
+                : base(msg)
+            {
+            }
+        }
+
+        public class DeviceInfoNode
+        {
+            public IntPtr DeviceInfoSet;
+            public SP_DEVINFO_DATA DeviceInfoData;
+            public SP_DEVICE_INTERFACE_DATA DeviceInterfaceData;
+            public SP_DEVICE_INTERFACE_DETAIL_DATA DeviceDetailData;
+            public string DeviceDescName;
+            public string DeviceDriverName;
         }
     }
 }
