@@ -9,19 +9,24 @@ namespace USB.NET.Platform.Windows.Exceptions
         public WindowsNativeException()
             : base()
         {
-
         }
 
-        public WindowsNativeException(string message)
-            : base(FormatMessage(message))
+        public WindowsNativeException(string message, bool getError = true)
+            : base(FormatMessage(message, getError))
         {
-
         }
 
-        private static string FormatMessage(string message)
+        private static string FormatMessage(string message, bool getError)
         {
-            var err = Marshal.GetLastWin32Error();
-            return $"{message}: {new Win32Exception(err).Message} (Error {err})";
+            if (getError)
+            {
+                var err = Marshal.GetLastWin32Error();
+                return $"{message}: {new Win32Exception(err).Message} (Error {err})";
+            }
+            else
+            {
+                return message;
+            }
         }
     }
 }

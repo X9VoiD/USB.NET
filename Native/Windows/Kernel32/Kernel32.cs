@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 namespace Native.Windows
 {
@@ -25,7 +26,13 @@ namespace Native.Windows
         public static extern bool CancelIoEx(IntPtr hHandle, IntPtr overlapped);
 
         [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
-        static extern bool DeviceIoControl(IntPtr hDevice, uint dwIoControlCode,
+        public static extern bool DeviceIoControl(IntPtr hDevice, uint dwIoControlCode,
+            IntPtr lpInBuffer, uint nInBufferSize,
+            IntPtr lpOutBuffer, uint nOutBufferSize,
+            out uint lpBytesReturned, ref NativeOverlapped lpOverlapped);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        public static extern bool DeviceIoControl(IntPtr hDevice, uint dwIoControlCode,
             IntPtr lpInBuffer, uint nInBufferSize,
             IntPtr lpOutBuffer, uint nOutBufferSize,
             out uint lpBytesReturned, IntPtr lpOverlapped);

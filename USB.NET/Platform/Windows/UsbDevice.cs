@@ -1,30 +1,27 @@
 using System;
 using USB.NET.Descriptors;
-using USB.NET.Platform.Windows.Enumerators;
-using static Native.Windows.CfgMgr;
-using static Native.Windows.Windows;
+using static Native.Windows.SetupAPI;
 
 namespace USB.NET.Platform.Windows
 {
     public sealed class UsbDevice : Device
     {
-        public UsbDevice(int devNode)
+        internal UsbDevice(IntPtr deviceInfoSet, SP_DEVINFO_DATA deviceInfoData, string hubName, uint hubPort, DeviceDescriptor deviceDescriptor, Configuration config)
         {
-            CM_Get_Parent(ref parentNode, devNode, 0);
-            Tools.RetrieveString(256, out var manufacturer, s =>
-            {
-                var size = s.Capacity;
-                return CM_Get_DevNode_Property(devNode, ref manufacturerGuid, out _, s, ref size, 0);
-            });
-            Manufacturer = manufacturer;
-            ProductName = "";
-            InternalFilePath = "";
-            Class = UsbEnumerator.GetNodeGuid(devNode);
+            this.deviceInfoSet = deviceInfoSet;
+            this.deviceInfoData = deviceInfoData;
+            this.hubName = hubName;
+            this.hubPort = hubPort;
+            this.DeviceDescriptor = deviceDescriptor;
+            this.Configuration = config;
         }
 
-        private Guid Class;
-        private int parentNode;
-        private static DEVPROPKEY manufacturerGuid = DEVPKEY_Device_Manufacturer;
+        internal DeviceDescriptor DeviceDescriptor { get; init; }
+        internal Configuration Configuration { get; init; }
+        private IntPtr deviceInfoSet;
+        private SP_DEVINFO_DATA deviceInfoData;
+        private string hubName;
+        private uint hubPort;
 
         public override void ClearFeature(ushort feature)
         {
@@ -33,12 +30,12 @@ namespace USB.NET.Platform.Windows
 
         public override Configuration GetConfiguration()
         {
-            throw new System.NotImplementedException();
+            return this.Configuration;
         }
 
         public override DeviceDescriptor GetDeviceDescriptor()
         {
-            throw new System.NotImplementedException();
+            return this.DeviceDescriptor;
         }
 
         public override string GetIndexedString(byte index)

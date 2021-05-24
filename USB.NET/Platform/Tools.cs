@@ -1,6 +1,3 @@
-using System;
-using System.Text;
-using Native;
 using USB.NET.Descriptors;
 
 namespace USB.NET.Platform
@@ -12,19 +9,9 @@ namespace USB.NET.Platform
             return (ushort)(((byte)DescriptorType.String << 8) | index);
         }
 
-        public static T RetrieveString<T>(int bufferSize, out string retrievedString, Func<StringBuilder, T> func)
+        public static ushort configuration_index(byte index)
         {
-            var strBuffer = new StringBuilder(bufferSize);
-            var ret = func(strBuffer);
-            retrievedString = strBuffer.ToString();
-            return ret;
-        }
-
-        public static string RetrieveString(int bufferSize, Action<StringBuilder> func)
-        {
-            var strBuffer = new StringBuilder(bufferSize);
-            func(strBuffer);
-            return strBuffer.ToString();
+            return (ushort)(((byte)DescriptorType.Configuration << 8) | index);
         }
     }
 }
