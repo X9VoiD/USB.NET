@@ -25,7 +25,7 @@ namespace USB.NET.Platform.Windows.Enumerators
         public IEnumerable<Device> GetDevices()
         {
             EnumerateHostControllers();
-            throw new NotImplementedException();
+            return usbDevices;
         }
 
         private void EnumerateHostControllers()
@@ -60,7 +60,7 @@ namespace USB.NET.Platform.Windows.Enumerators
                 using var hostController = File.Open(devicePath, FileMode.Open, FileAccess.Write, FileShare.Write);
                 var hostControllerHandle = hostController.SafeFileHandle;
                 if (!hostControllerHandle.IsInvalid)
-                    EnumerateHostController(hostControllerHandle.DangerousGetHandle(), devicePath, DeviceInfoSet, deviceInfoData);
+                    EnumerateHostController(hostControllerHandle.DangerousGetHandle());
             }
         }
 
@@ -108,26 +108,25 @@ namespace USB.NET.Platform.Windows.Enumerators
             }
         }
 
-        private void EnumerateHostController(IntPtr hostControllerHandle, string devicePath, IntPtr deviceInfoSet, SP_DEVINFO_DATA deviceInfoData)
+        private void EnumerateHostController(IntPtr hostControllerHandle)
         {
             var hubName = GetRootHubName(hostControllerHandle, IOCTL.USB_GET_ROOT_HUB_NAME);
-            EnumerateHub(@"\\.\" + hubName);
+            EnumerateHub(hubName);
         }
 
         private void EnumerateHub(string hubName)
         {
-            using var hubHandle = File.Open(hubName, FileMode.Open, FileAccess.Write, FileShare.Write);
-            var hubNativeHandle = hubHandle.SafeFileHandle;
-            if (hubNativeHandle.IsInvalid)
+            var hubHandle = CreateFile(hubName, FileAccess.Write, FileShare.Write, IntPtr.Zero, FileMode.Open, (FileAttributes)0, IntPtr.Zero);
+            if (hubHandle == InvalidHandle)
                 throw new UsbEnumeratorException("Failed to open hub", false);
 
-            if (!IOControl<NodeInformation>(hubNativeHandle.DangerousGetHandle(), IOCTL.USB_GET_NODE_INFORMATION, out var hubInfo, out _))
+            if (!IOControl<NodeInformation>(hubHandle, IOCTL.USB_GET_NODE_INFORMATION, out var hubInfo, out _))
                 throw new UsbEnumeratorException("Failed to retrieve USB hub information");
 
             if (hubInfo.NodeType != HubNode.UsbHub)
                 throw new UsbEnumeratorException("DeviceIoControl returned wrong information type for hub");
 
-            EnumerateHubPorts(hubName, hubNativeHandle.DangerousGetHandle(), hubInfo.HubInformation.HubDescriptor.bNumberOfPorts);
+            EnumerateHubPorts(hubName, hubHandle, hubInfo.HubInformation.HubDescriptor.bNumberOfPorts);
         }
 
         private void EnumerateHubPorts(string hubName, IntPtr hubNativeHandle, byte numberOfPorts)
@@ -142,23 +141,27 @@ namespace USB.NET.Platform.Windows.Enumerators
                 if (!IOControl(hubNativeHandle, IOCTL.USB_GET_NODE_INFORMATION_EX, nodeConnectionInformationEx, out nodeConnectionInformationEx, out var size))
                     continue;
 
-                if (nodeConnectionInformationEx.DeviceIsHub == true)
+                if (nodeConnectionInformationEx.DeviceIsHub)
                 {
                     var externalHubName = GetExternalHubName(hubNativeHandle, i);
-                    EnumerateHub(externalHubName);
-                    continue;
+                    if (externalHubName != null)
+                    {
+                        EnumerateHub(@"\\.\" + externalHubName);
+                        continue;
+                    }
                 }
-
-                if (nodeConnectionInformationEx.ConnectionStatus == ConnectionStatus.NoDeviceConnected)
+                else if (nodeConnectionInformationEx.ConnectionStatus == ConnectionStatus.NoDeviceConnected)
                     continue;
 
                 var driverKeyName = GetDriverKeyName(hubNativeHandle, i);
-                (var deviceInfoSet, var deviceInfoData) = GetDeviceProperties(driverKeyName);
+                (var deviceInfoSet, var deviceInfoData, var path) = GetDeviceProperties(driverKeyName);
 
                 var configuration = GetConfigurationDescriptor(hubNativeHandle, i, 0);
 
-                usbDevices.Add(new UsbDevice(deviceInfoSet, deviceInfoData, hubName, i, nodeConnectionInformationEx.DeviceDescriptor, configuration));
+                usbDevices.Add(new UsbDevice(path, deviceInfoSet, deviceInfoData, hubName, i, nodeConnectionInformationEx.DeviceDescriptor, configuration));
             }
+
+            CloseHandle(hubNativeHandle);
         }
 
         private static Configuration GetConfigurationDescriptor(IntPtr hubNativeHandle, uint port, ushort descriptorIndex)
@@ -199,16 +202,16 @@ namespace USB.NET.Platform.Windows.Enumerators
             }
         }
 
-        private (IntPtr, SP_DEVINFO_DATA) GetDeviceProperties(string driverKeyName)
+        private (IntPtr, SP_DEVINFO_DATA, string) GetDeviceProperties(string driverKeyName)
         {
             var device = deviceList.Where(d => d.DeviceDriverName == driverKeyName).ToArray();
             if (!device.Any())
-                return (IntPtr.Zero, default);
+                return (IntPtr.Zero, default, null);
 
             if (device.Length > 1)
                 throw new UsbEnumeratorException("Encountered unexpected device duplicate");
 
-            return (device[0].DeviceInfoSet, device[0].DeviceInfoData);
+            return (device[0].DeviceInfoSet, device[0].DeviceInfoData, device[0].DeviceDetailData.DevicePath);
         }
 
         private static bool GetDeviceProperty(IntPtr deviceInfoSet, SP_DEVINFO_DATA deviceInfoData, SPDRP property, out string value)

@@ -7,7 +7,7 @@ namespace USB.NET.Platform.Windows.Enumerators.USB
     {
         public USBConfiguration(ConfigurationDescriptor descriptor, IntPtr data)
         {
-
+            this.descriptor = descriptor;
         }
 
         private ConfigurationDescriptor descriptor;

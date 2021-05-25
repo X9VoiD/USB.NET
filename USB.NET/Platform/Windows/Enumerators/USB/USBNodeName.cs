@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 
 namespace USB.NET.Platform.Windows.Enumerators.USB
 {
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
     public struct USBNodeName
     {
         public uint ConnectionIndex;

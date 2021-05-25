@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Diagnostics;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using USB.NET.Platform.Windows;
+using USB.NET.Descriptors;
 
 namespace USB.NET.Tests
 {
@@ -34,14 +34,16 @@ namespace USB.NET.Tests
             foreach (var device in Host.DeviceManager.GetAllDevices())
             {
                 WriteDeviceInfo(device);
-                try
+                for (int i = 1; i <= 255; i++)
                 {
-                    for (byte i = 1; i < 255; i++)
-                        WriteLine(device.GetIndexedString(i), $"Index[{i}]");
-                }
-                catch (Exception ex)
-                {
-                    WriteLine(ex);
+                    try
+                    {
+                        WriteLine(device.GetIndexedString((byte)i), $"Index[{i}]");
+                    }
+                    catch (StringDescriptor.MalformedStringDescriptor e)
+                    {
+                        WriteLine($"{{Raw Content = {BitConverter.ToString(e.RawContent)}}}", $"Index[{i}]");
+                    }
                 }
             }
         }
